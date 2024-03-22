@@ -1,0 +1,4 @@
+(executable
+ (public_name fullylazymad)
+ (name main)
+ (libraries fullylazymad))
