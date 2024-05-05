@@ -171,7 +171,7 @@ and extract_pulp t = match t with
   | Abs a -> (a.taken <- false; extract_pulp a.body)
   | App a -> (a.taken <- false; extract_pulp a.head; extract_pulp a.arg)
 
-(* Invariant: all nodes of the term have the same taken *)
+(* Invariant: all nodes of the term have taken = false *)
 and extract_skeleton t =
 Printf.printf "\tEXTRACT SKELETON OF: %s\n" (pretty_marked t);
 match t with
