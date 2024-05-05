@@ -1,4 +1,4 @@
 (executable
  (public_name fullylazymad)
  (name main)
- (libraries fullylazymad))
+ (libraries fullylazymad core "core_unix.command_unix"))

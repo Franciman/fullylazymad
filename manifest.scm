@@ -1,1 +1,10 @@
-(specifications->manifest '("gcc-toolchain" "ocaml" "dune" "opam"))
+(specifications->manifest
+ '("gcc-toolchain"
+   "ocaml@4.14.1"
+   "dune"
+   "opam"
+   "ocaml-menhir"
+   "ocaml-core"
+   "ocaml-merlin"
+   "ocaml-core-unix"
+   "vim"))
