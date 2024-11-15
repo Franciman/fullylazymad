@@ -1,0 +1,1 @@
+(\id. (\gamma. (\z. (z id) (z id)) (gamma (gamma (gamma id)))) (\x.\y. (x id) (x id) y)) (\z. z)

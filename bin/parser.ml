@@ -49,8 +49,18 @@ let parse_many p =
     let rec parse_many_helper acc p ctx = match p ctx with
                  | Success (v, ctx2) -> parse_many_helper (v :: acc) p ctx2
                  | Failure _ -> Success (acc, ctx)
-    in (fun ctx -> parse_many_helper [] p ctx)
+    in List.rev <$> (parse_many_helper [] p)
 
+(* Variant of parse_maby requiring p to succeed at least once *)
+let parse_some p =
+  let* r1 = p in
+  let* rs = parse_many p in
+  pure (r1 :: rs)
+
+(* Recursion *)
+let fix f =
+  let rec r ctx = f r ctx
+  in r
 
 (* Parsing primitives *)
 
@@ -149,27 +159,22 @@ let parse_var_name =
    pure (make_var_name (var_start :: var_cont))
 
 (* Lambda term parser *)
-let rec parse_var =
+let parse_var =
    let* name = lexeme parse_var_name in
    pure (Syntax_tree.Var name)
 
-and parse_lambda = (fun ctx -> (
-   let* var = lexeme_char '\\' *> lexeme parse_var_name <* lexeme_char '.' in
-   let* body = parse_term in
-   pure (Syntax_tree.Abs (var, body))) ctx)
-
-and parse_fancy_lambda = (fun ctx -> (
-   let* var = lexeme_unicode_char "λ" *> lexeme parse_var_name <* lexeme_char '.' in
-   let* body = parse_term in
-   pure (Syntax_tree.Abs (var, body))) ctx)
-
-and parse_term1 = (fun ctx -> (parse_lambda <|> parse_var <|> parse_paren_term) ctx)
-and parse_term = (fun ctx -> (
-  let make_app head ts = List.fold_left (fun acc v -> Syntax_tree.App (acc, v)) head ts in
-  let* head = parse_term1 in
-  let* args = parse_many (lexeme parse_term1) in
-  pure (make_app head args)) ctx)
-
-and parse_paren_term = (fun ctx -> (lexeme_char '(' *> parse_term <* lexeme_char ')') ctx)
+let parse_term = fix (fun parse_term ->
+  let parse_lambda =
+       let* var = lexeme_char '\\' *> lexeme parse_var_name <* lexeme_char '.' in
+       let* body = parse_term in
+       pure (Syntax_tree.Abs (var, body))
+  in let parse_fancy_lambda =
+       let* var = lexeme_unicode_char "λ" *> lexeme parse_var_name <* lexeme_char '.' in
+       let* body = parse_term in
+       pure (Syntax_tree.Abs (var, body))
+  in let parse_paren_term = lexeme_char '(' *> parse_term <* lexeme_char ')'
+  in let parse_term1 = parse_lambda <|> parse_fancy_lambda <|> parse_var <|> parse_paren_term
+  in let* ts = parse_some (lexeme parse_term1)
+  in pure (List.fold_left (fun acc v -> Syntax_tree.App (acc, v)) (List.hd ts) (List.tl ts)))
 
 let parse_program = parse_term <* (skip_whitespaces <* expect_eof)

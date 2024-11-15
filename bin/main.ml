@@ -1,40 +1,43 @@
-open Core
-open Fullylazymad
+module type Interpreter = sig
+  type term
+  val scope_check : Syntax_tree.term -> term
+  val pretty_term : term -> string
+  val run : Logger.logger -> term -> term
+end
 
-let functional_interpret (t: Syntax_tree.term) =
-  let ft = Functional.scope_check t in
-  let res = Functional.run ft in
-  Functional.pretty_term res
+module Runner (I: Interpreter) = struct
+  let interpret (logger: Logger.logger) (t: Syntax_tree.term) =
+      let code = I.scope_check t in
+      let result = I.run logger code in
+      I.pretty_term result
+end
 
-let imperative_interpret (t: Syntax_tree.term) =
-  let it = Imperative.scope_check t in
-  let res = Imperative.run it in
-  Imperative.pretty_term res 
+let interpreters: (string * (module Interpreter)) list  =
+    [ "functional", (module Interpreters.Functional : Interpreter);
+      "fully-lazy-functional", (module Interpreters.Fully_lazy_functional : Interpreter);
+      "imperative", (module Interpreters.Imperative : Interpreter);
+      "fully-lazy-imperative", (module Interpreters.Fully_lazy_imperative : Interpreter);
+    ]
 
-let fully_lazy_imperative_interpret (t: Syntax_tree.term) =
-  let it = Fully_lazy_imperative.scope_check t in
-  let res = Fully_lazy_imperative.run it in
-  Fully_lazy_imperative.pretty_term res 
-
-
-let loop filename () =
-  let inx = In_channel.create filename in
-  let input = In_channel.input_all inx in
-  let res = Handwritten_parser.run_parser Handwritten_parser.parse_program input in
+let loop (mode: string) (filename: string) () =
+  let inx = Core.In_channel.create filename in
+  let input = Core.In_channel.input_all inx in
+  let res = Parser.run_parser Parser.parse_program input in
   match res with
-    | Error err -> fprintf stdout "%s\n" err
+    | Error err -> Printf.printf "%s\n" err
     | Ok tree -> 
-        (fprintf stdout "FUNCTIONAL RUN:\n";
-         fprintf stdout "FINAL RESULT: %s\n" (functional_interpret tree);
-         fprintf stdout "IMPERATIVE RUN:\n";
-         fprintf stdout "FINAL RESULT: %s\n" (imperative_interpret tree);
-         fprintf stdout "FULLY LAZY IMPERATIVE RUN:\n";
-         fprintf stdout "FINAL RESULT: %s\n" (fully_lazy_imperative_interpret tree))
+         (try 
+           let interpreter_module = List.assoc mode interpreters in
+           let module I = (val interpreter_module : Interpreter) in
+           let open Runner(I) in
+           let logger = Logger.make_stdout_logger_all in
+           Printf.printf "Interpreter %s, final result: %s\n" mode (interpret logger tree)
+         with Not_found -> Printf.printf "Invalid mode.")
  
 
 let () =
-  Command.basic_spec ~summary:"Parse and display λ-terms"
-    Command.Spec.(empty +> anon ("filename" %: string))
+  Core.Command.basic_spec ~summary:"Parse and display λ-terms"
+    Core.Command.Spec.(empty +> anon ("mode" %: string) +> anon ("filename" %: string))
     loop
   |> Command_unix.run
 

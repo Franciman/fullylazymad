@@ -6,5 +6,4 @@
    "ocaml-menhir"
    "ocaml-core"
    "ocaml-merlin"
-   "ocaml-core-unix"
-   "vim"))
+   "ocaml-core-unix"))
