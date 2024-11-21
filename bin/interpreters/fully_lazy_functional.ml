@@ -195,7 +195,7 @@ let pretty_chain c =
 let print_state logger (t, s, c, eval_done, betas) =
   Logger.log logger Logger.EvalTrace (lazy (
       let env = extract_environment (t, s) in
-      Printf.sprintf "Current state:\n\tEval done: %b\n\tBetas: %d\n\tTerm: <%s> %s\n\tEnv: %s\n\tChain:\n%s" eval_done betas (pretty_term t) (pretty_stack s) (pretty_env env) (pretty_chain c)
+      Printf.sprintf "Current state:\n\tEval done: %b\n\tBetas: %d\n\tChain:\n%s\n\tTerm: <%s> %s\n\tEnv: %s" eval_done betas (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env env)
   ))
 
 
