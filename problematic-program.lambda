@@ -1,1 +1,1 @@
-(\id. (\gamma. (\z. (z id) (z id)) (gamma (gamma (gamma id)))) (\x.\y. (x id) (x id) y)) (\z. z)
+(\i. (\g. (\z. (z i) (z i)) (g (g (g i)))) (\x.\y. (x i) (x i) y)) (\z. z)

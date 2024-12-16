@@ -151,23 +151,20 @@ let rec pretty_term_helper t prec = match t with
 
 and pretty_term t = pretty_term_helper t 0
 
-let rec extract_environment_helper acc t = match t with
+let extract_environment ~avoid s =
+ let rec extract_environment_helper acc t = match t with
   | Var v -> (match v.sub with
+               | _ when List.exists (fun (_,_,v') -> v==v') avoid -> acc
                | NoSub -> acc
                | SubTerm t | SubValue t | SubSkel t ->
-                  (let entry = (v.name, v.sub, v) in
-                   (* Remove this substitution, to avoid duplicates. We shall restore it later *)
-                   v.sub <- NoSub;
-                   entry :: extract_environment_helper acc t)
+                  let entry = (v.name, v.sub, v) in
+                  extract_environment_helper (entry::(List.filter (fun (_,_,v') -> v!=v') acc)) t
                | Copy _ -> raise InvalidTerm
                | Uplink _ -> raise InvalidTerm)
   | Abs a -> extract_environment_helper acc a.body
   | App a -> extract_environment_helper (extract_environment_helper acc a.head) a.arg
-
-and extract_environment (t, s) =
-  let env = List.fold_left extract_environment_helper [] (t :: s) in
-  (* Now, we restore all vrefs' substitutions to their old value and just return the pair name, sub*)
-  List.map (fun (name, sub, vref) -> vref.sub <- sub; (name, sub)) env
+ in
+  List.rev (List.fold_left (extract_environment_helper) [] s)
 
 
 let pretty_stack s = String.concat ":" (List.map (fun t -> pretty_term_helper t app_prec) s)
@@ -180,20 +177,22 @@ let pretty_sub name sub = match sub with
   | Copy _ -> raise InvalidTerm
   | Uplink _ -> raise InvalidTerm
 
-let pretty_env env = String.concat ":" (List.map (fun (name,sub) -> pretty_sub name sub) env)
+let pretty_env env = String.concat ":" (List.map (fun (name,sub,_) -> pretty_sub name sub) env)
   
 
-let pretty_chain c =
-  let pretty_chain_helper (v, s) = 
-    let env = extract_environment (Var v, s) in
-    Printf.sprintf "(%s,%s,%s)" v.name (pretty_stack s) (pretty_env env) in
-  String.concat ":" (List.map pretty_chain_helper c)
+let pretty_chain ~avoid c =
+  let pretty_chain_helper ~avoid (v, s) = 
+    let avoid = (v.name,v.sub,v)::avoid in
+    let env = extract_environment ~avoid s in
+    env@avoid,Printf.sprintf "(%s,%s,%s)"  v.name (pretty_stack s) (pretty_env env) in
+  let _,l = List.fold_left (fun (avoid,l) ci -> let avoid,i = pretty_chain_helper ~avoid ci in avoid,i::l) (avoid,[]) c  in
+  String.concat ":" (List.rev l)
 
 
 let print_state logger trans (t, s, c) =
   Logger.log logger Logger.EvalTrace (lazy (
-      let env = extract_environment (t, s) in
-      Printf.sprintf "%s\t%s|%s|%s|%s" trans (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env env)
+    let env = extract_environment ~avoid:[] (t::s) in
+      Printf.sprintf "%s\t%s|%s|%s|%s" trans (pretty_chain ~avoid:env c) (pretty_term t) (pretty_stack s) (pretty_env env)
   ))
 
 
