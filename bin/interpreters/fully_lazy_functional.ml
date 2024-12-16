@@ -107,8 +107,8 @@ let extract_skeleton t = match t with
 (* Convert a Syntax_tree.term in a term *)
 
 let rec scope_checker env (t: Syntax_tree.term): term =
-   match t with
-     | Var v -> (match List.assoc_opt v env with
+  match t with
+    | Var v -> (match List.assoc_opt v env with
                   | Some vref -> Var vref
                   | None -> raise (UnboundVariable v))
     | Abs (v, body) ->
@@ -127,7 +127,7 @@ let rec rename_term (t: term) = match t with
       let fresh_v = make_fresh_var v.orig_name in
       v.sub <- Copy fresh_v;
       let renamed_body = rename_term body in
-      v.sub <- NoSub; (* inutile; però mantiene l'invariante *)
+      v.sub <- NoSub;
       Abs { v = fresh_v; body = renamed_body }
   | App { head; arg } -> 
       let new_head = rename_term head in
@@ -136,7 +136,7 @@ let rec rename_term (t: term) = match t with
       
 type stack = term list
 and chain = (var_ref * stack) list 
-and state = term * stack * chain * bool * int
+and state = term * stack * chain
 
 (* Pretty printer *)
 
@@ -146,8 +146,8 @@ let abs_prec = 1
 
 let rec pretty_term_helper t prec = match t with
   | Var { orig_name = _; name = name; sub = _ } -> Utils.surround_prec var_prec prec name
-  | Abs {v; body} -> Utils.surround_prec abs_prec prec ("λ" ^ v.name ^ ". " ^ pretty_term_helper body abs_prec)
-  | App {head; arg} -> Utils.surround_prec app_prec prec (pretty_term_helper head app_prec ^ " " ^ pretty_term_helper arg (app_prec + 1))
+  | Abs {v; body} -> Utils.surround_prec abs_prec prec ("λ" ^ v.name ^ "." ^ pretty_term_helper body abs_prec)
+  | App {head; arg} -> Utils.surround_prec app_prec prec (pretty_term_helper head app_prec ^ "" ^ pretty_term_helper arg (app_prec + 1))
 
 and pretty_term t = pretty_term_helper t 0
 
@@ -170,66 +170,72 @@ and extract_environment (t, s) =
   List.map (fun (name, sub, vref) -> vref.sub <- sub; (name, sub)) env
 
 
-let pretty_stack s = String.concat " " (List.map (fun t -> pretty_term_helper t app_prec) s)
+let pretty_stack s = String.concat ":" (List.map (fun t -> pretty_term_helper t app_prec) s)
 
 let pretty_sub name sub = match sub with
   | NoSub -> ""
-  | SubTerm t -> "[" ^ name ^ " <-- " ^ pretty_term t ^ "]"
-  | SubValue t -> "[" ^ name ^ " <-- " ^ pretty_term t ^ " / value" ^ "]"
-  | SubSkel t -> "[" ^ name ^ " <-- " ^ pretty_term t ^ " / skel" ^ "]"
+  | SubTerm t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₜ"
+  | SubValue t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₗ"
+  | SubSkel t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₛ"
   | Copy _ -> raise InvalidTerm
   | Uplink _ -> raise InvalidTerm
 
-let rec pretty_env env = match env with
-  | [] -> ""
-  | (name, sub) :: vrefs -> pretty_sub name sub ^ pretty_env vrefs
+let pretty_env env = String.concat ":" (List.map (fun (name,sub) -> pretty_sub name sub) env)
   
 
 let pretty_chain c =
   let pretty_chain_helper (v, s) = 
     let env = extract_environment (Var v, s) in
-    Printf.sprintf "\t\tTerm: <%s> %s\n\t\tEnv: %s" v.name (pretty_stack s) (pretty_env env) in
-  String.concat "\n" (List.map pretty_chain_helper c)
+    Printf.sprintf "(%s,%s,%s)" v.name (pretty_stack s) (pretty_env env) in
+  String.concat ":" (List.map pretty_chain_helper c)
 
 
-let print_state logger (t, s, c, eval_done, betas) =
+let print_state logger trans (t, s, c) =
   Logger.log logger Logger.EvalTrace (lazy (
       let env = extract_environment (t, s) in
-      Printf.sprintf "Current state:\n\tEval done: %b\n\tBetas: %d\n\tChain:\n%s\n\tTerm: <%s> %s\n\tEnv: %s" eval_done betas (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env env)
+      Printf.sprintf "%s\t%s|%s|%s|%s" trans (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env env)
   ))
 
 
+let step : state -> string * state =
+ function
+  | App { head; arg }, args, chain ->
+      "sea₁ ",(head, arg :: args, chain)
+  | Abs { v; body }, arg :: args, chain ->
+      v.sub <- SubTerm arg;
+      "β",(body, args, chain)
+  | Var ({sub=SubTerm t; _} as vref), stack, chain ->
+      (*CSC: for variables in the chain, the sub is meaningless *)
+      "sea₂",(t, [], (vref, stack) :: chain)
+  | Var ({sub=SubValue v; _} as vref), _stack, _chain as s ->
+      let skel = extract_skeleton v in
+      vref.sub <- SubSkel skel;
+      "sk",s
+  | Var {sub=SubSkel v; _}, stack, chain ->
+      (* CSC: there is no sea₄ and thus ss fires instead and we do not check for the stack to be non-empty *)
+      "ss",(rename_term v, stack, chain)
+  | Abs _ as value, [], (vref, stack) :: chain ->
+      vref.sub <- SubValue value;
+      "sea₃",(Var vref, stack, chain)
+  | Abs _, [], [] ->
+     assert false (* stepping over a normal term *)
+  | Var {sub=NoSub; name; _}, _stack, _chain ->
+     raise (UnboundVariable name)
+  | Var {sub=(Uplink _ | Copy _); _}, _stack, _chain ->
+     raise InvalidTerm
 
-let step _log (s : state) = match s with
-  | Var vref, stack, chain, eval_done, betas ->
-      (match vref.sub with
-        | NoSub -> raise (UnboundVariable vref.name)
-        | SubTerm t -> (t, [], (vref, stack) :: chain, eval_done, betas)
-        | SubValue v ->
-            (let skel = extract_skeleton v in
-             vref.sub <- SubSkel skel;
-             s)
-        | SubSkel v -> (rename_term v, stack, chain, eval_done, betas)
-        | Uplink _ -> raise InvalidTerm
-        | Copy _ -> raise InvalidTerm)
-  | Abs _ as value, [], [], _, betas -> (value, [], [], true, betas) (* Evaluation is over *)
-  | Abs _ as value, [], (vref, stack) :: chain, eval_done, betas ->
-      (vref.sub <- SubValue value;
-       (Var vref, stack, chain, eval_done, betas))
-  | Abs { v; body }, arg :: args, chain, eval_done, betas ->
-      (v.sub <- SubTerm arg;
-       (body, args, chain, eval_done, betas + 1))
-  | App { head; arg }, args, chain, eval_done, betas ->
-      (head, arg :: args, chain, eval_done, betas)
-
-(* Aggiungi il print a ogni step *)
-let rec eval logger = function
-  | (value, [], [], true, betas) ->
-      (Logger.log logger Logger.Summary (lazy (Printf.sprintf "Number of betas: %d\n" betas));
-       value) (* Evaluation is over *)
-  | state -> let next_state = step logger state in print_state logger next_state; eval logger next_state
+let rec eval logger betas =
+ function
+  | (Abs _ as value, [], []) ->
+      (* Normal form reached *)
+      Logger.log logger Logger.Summary (lazy (Printf.sprintf "Number of betas: %d\n" betas));
+      value
+  | state ->
+     let trans,next_state = step state in
+     print_state logger ("→"^trans) next_state;
+     eval logger (if trans="β" then betas+1 else betas) next_state
 
 let run logger t =
-  let s = (t, [], [], false, 0) in
-  print_state logger s;
-  eval logger s
+  let s = (t, [], []) in
+  print_state logger "" s;
+  eval logger 0 s

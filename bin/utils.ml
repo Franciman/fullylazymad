@@ -18,7 +18,7 @@ let rec render_subscript n = match n with
 
 let gen_fresh_name : string -> string =
   let counter = ref 0 in
-  fun s -> counter := (!counter + 1); Printf.sprintf "%s%s" s (render_subscript !counter)
+  fun s -> incr counter; Printf.sprintf "%s%s" s (render_subscript !counter)
 
 
 let surround_prec curr_prec ctx_prec s =
