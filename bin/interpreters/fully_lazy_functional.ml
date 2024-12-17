@@ -35,37 +35,40 @@ let set_parent mt p = match mt with
 (* TODO: Optimize more *)
 let rec compute_occurrences mt = match mt with
   | MVar v as var -> (match v.vref.sub with
-                       | Uplink (MAbs a) ->  (a.occurrences <- var :: a.occurrences)
+                       | Uplink (MAbs a) -> a.occurrences <- var :: a.occurrences
                        | _ -> ())
-  | MAbs a -> (compute_occurrences a.body; a.vref.sub <- NoSub)
-  | MApp a -> (compute_occurrences a.head; compute_occurrences a.arg)
+  | MAbs a -> compute_occurrences a.body; a.vref.sub <- NoSub
+  | MApp a -> compute_occurrences a.head; compute_occurrences a.arg
 
-let rec blackmark_helper (t: term) (parent: marked_term option): marked_term = match t with
-  | Var v -> MVar { taken = false; vref = v; parent = parent }
+let rec blackmark_helper (t: term) : marked_term = match t with
+  | Var v -> MVar { taken = false; vref = v; parent = None }
   | Abs a ->
-      (let new_body = blackmark_helper a.body None in
-       let res = MAbs { taken = false;
-                           vref = a.v;
-                           body = new_body;
-                           occurrences = [];
-                           parent = parent } in
-       set_parent new_body (Some res);
-       a.v.sub <- Uplink res;
-       res)
+     let new_body = blackmark_helper a.body in
+     let res =
+       MAbs { taken = false;
+              vref = a.v;
+              body = new_body;
+              occurrences = [];
+              parent = None } in
+     set_parent new_body (Some res);
+     a.v.sub <- Uplink res;
+     res
   | App a ->
-      (let new_head = blackmark_helper a.head None in
-       let new_arg = blackmark_helper a.arg None in
-       let res = MApp { taken = false;
-                       head = new_head;
-                       arg = new_arg;
-                       parent = parent } in
-       set_parent new_head (Some res);
-       set_parent new_arg (Some res);
-       res)
+     let new_head = blackmark_helper a.head in
+     let new_arg = blackmark_helper a.arg in
+     let res =
+       MApp { taken = false;
+              head = new_head;
+              arg = new_arg;
+              parent = None } in
+     set_parent new_head (Some res);
+     set_parent new_arg (Some res);
+     res
                            
-and blackmark t = let res = blackmark_helper t None in compute_occurrences res; res
+and blackmark t = let res = blackmark_helper t in compute_occurrences res; res
 
-let rec mark_skeleton omt = match omt with
+let rec mark_skeleton =
+ function
   | None -> ()
   | Some (MVar v) -> (v.taken <- true; mark_skeleton v.parent)
   | Some (MAbs a) ->
@@ -98,10 +101,10 @@ let rec extract_pulp mt = match mt with
 
   
 let extract_skeleton t = match t with
-  | Abs _ -> (let marked_term = (blackmark t) in
-              mark_skeleton (Some marked_term);
-              extract_pulp marked_term)
-              
+  | Abs _ ->
+     let marked_term = blackmark t in
+     mark_skeleton (Some marked_term);
+     extract_pulp marked_term
   | Var _ | App _ -> raise InvalidTerm
 
 (* Convert a Syntax_tree.term in a term *)
