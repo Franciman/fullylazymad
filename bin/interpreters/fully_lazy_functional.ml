@@ -186,13 +186,13 @@ let pretty_chain ~avoid c =
     let env = extract_environment ~avoid s in
     env@avoid,Printf.sprintf "(%s,%s,%s)"  v.name (pretty_stack s) (pretty_env env) in
   let _,l = List.fold_left (fun (avoid,l) ci -> let avoid,i = pretty_chain_helper ~avoid ci in avoid,i::l) (avoid,[]) c  in
-  String.concat ":" (List.rev l)
+  String.concat ":" l
 
 
 let print_state logger trans (t, s, c) =
   Logger.log logger Logger.EvalTrace (lazy (
     let env = extract_environment ~avoid:[] (t::s) in
-      Printf.sprintf "%s\t%s|%s|%s|%s" trans (pretty_chain ~avoid:env c) (pretty_term t) (pretty_stack s) (pretty_env env)
+    Printf.sprintf "%s\t\027[31m%s\027[0m|%s|%s|\027[32m%s\027[0m" trans (pretty_chain ~avoid:env c) (pretty_term t) (pretty_stack s) (pretty_env env)
   ))
 
 
