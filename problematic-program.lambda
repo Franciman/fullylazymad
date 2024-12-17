@@ -1,1 +1,1 @@
-(\i. (\g. (\z. (z i) (z i)) (g (g (g i)))) (\x.\y. (x i) (x i) y)) (\z. z)
+(\i. (\g. (\z. (z i) (z i)) (g (g (g i)))) (\x.\y. (x i) (x i) y)) (\w. w)

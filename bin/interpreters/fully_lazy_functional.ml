@@ -20,6 +20,7 @@ marked_term =
   | MApp of { mutable taken: bool; head: marked_term; arg: marked_term; mutable parent: marked_term option }
 
 exception UnboundVariable of string
+exception BoundedTwice of string
 exception InvalidTerm
 
 let make_fresh_var (orig_name: string) = 
@@ -105,17 +106,24 @@ let extract_skeleton t = match t with
 
 (* Convert a Syntax_tree.term in a term *)
 
-let rec scope_checker env (t: Syntax_tree.term): term =
+let rec scope_checker env avoid (t: Syntax_tree.term): string list * term =
   match t with
     | Var v -> (match List.assoc_opt v env with
-                  | Some vref -> Var vref
+                  | Some vref -> avoid,Var vref
                   | None -> raise (UnboundVariable v))
     | Abs (v, body) ->
-       (let vref: var_ref = { orig_name = v; name = v; sub = NoSub } in
-        Abs { v = vref; body = scope_checker ((v, vref) :: env) body })
-    | App (head, arg) -> App { head = scope_checker env head; arg = scope_checker env arg }
+       (if List.mem v avoid then
+         raise (BoundedTwice v)
+        else
+         let vref: var_ref = { orig_name = v; name = v; sub = NoSub } in
+         let avoid,body = scope_checker ((v, vref) :: env) (v::avoid) body in
+         avoid, Abs { v = vref; body })
+    | App (head, arg) ->
+        let avoid,head = scope_checker env avoid head in
+        let avoid,arg = scope_checker env avoid arg in
+        avoid, App { head ; arg }
 
-let scope_check t = scope_checker [] t
+let scope_check t = snd (scope_checker [] [] t)
 
 (* Interpreter *)
 
