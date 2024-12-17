@@ -10,6 +10,7 @@ and sub =
   | SubTerm of term
   | SubValue of term
   | SubSkel of term
+  | InsideSub
   | Copy of var_ref
   | Uplink of marked_term
 and
@@ -32,7 +33,6 @@ let set_parent mt p = match mt with
   | MApp a -> a.parent <- p
   
 (* Convert from term to marked_term *)
-(* TODO: Optimize more *)
 let rec compute_occurrences mt = match mt with
   | MVar v as var -> (match v.vref.sub with
                        | Uplink (MAbs a) -> a.occurrences <- var :: a.occurrences
@@ -80,31 +80,27 @@ let rec mark_skeleton =
       if not a.taken
       then (a.taken <- true; mark_skeleton a.parent)
       
-(* Extract pulp and unmark term *)
+(* Extract flesh and unmark term *)
 let rec unmark mt = match mt with
   | MVar v -> Var v.vref
   | MAbs a -> Abs { v = a.vref; body = unmark a.body }
   | MApp a -> App { head = unmark a.head; arg = unmark a.arg }
 
-let rec extract_pulp mt = match mt with
-  | MVar v when not v.taken -> Var v.vref
-  | MAbs { taken = false; vref = _; occurrences = _; body = _; parent = _}
-  | MApp { taken = false; head = _; arg = _; parent = _} ->
-      (let fresh_vref = make_fresh_var "p" in
-      fresh_vref.sub <- SubTerm (unmark mt);
-      Var fresh_vref)
-      
+let rec extract_flesh mt = match mt with
   | MVar v -> Var v.vref
-  | MAbs a -> Abs { v = a.vref; body = extract_pulp a.body }
-  | MApp a -> App { head = extract_pulp a.head; arg = extract_pulp a.arg }
+  | MAbs { taken = false; _}
+  | MApp { taken = false; _} ->
+     let fresh_vref = make_fresh_var "p" in
+     fresh_vref.sub <- SubTerm (unmark mt);
+     Var fresh_vref
+  | MAbs a -> Abs { v = a.vref; body = extract_flesh a.body }
+  | MApp a -> App { head = extract_flesh a.head; arg = extract_flesh a.arg }
 
-
-  
 let extract_skeleton t = match t with
   | Abs _ ->
      let marked_term = blackmark t in
      mark_skeleton (Some marked_term);
-     extract_pulp marked_term
+     extract_flesh marked_term
   | Var _ | App _ -> raise InvalidTerm
 
 (* Convert a Syntax_tree.term in a term *)
@@ -162,8 +158,7 @@ let extract_environment ~avoid s =
                | SubTerm t | SubValue t | SubSkel t ->
                   let entry = (v.name, v.sub, v) in
                   extract_environment_helper (entry::(List.filter (fun (_,_,v') -> v!=v') acc)) t
-               | Copy _ -> raise InvalidTerm
-               | Uplink _ -> raise InvalidTerm)
+               | Copy _ | Uplink _ | InsideSub -> raise InvalidTerm)
   | Abs a -> extract_environment_helper acc a.body
   | App a -> extract_environment_helper (extract_environment_helper acc a.head) a.arg
  in
@@ -177,8 +172,7 @@ let pretty_sub name sub = match sub with
   | SubTerm t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₜ"
   | SubValue t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₗ"
   | SubSkel t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₛ"
-  | Copy _ -> raise InvalidTerm
-  | Uplink _ -> raise InvalidTerm
+  | InsideSub | Copy _ | Uplink _ -> raise InvalidTerm
 
 let pretty_env env = String.concat ":" (List.map (fun (name,sub,_) -> pretty_sub name sub) env)
   
@@ -207,14 +201,13 @@ let step : state -> string * state =
       v.sub <- SubTerm arg;
       "β",(body, args, chain)
   | Var ({sub=SubTerm t; _} as vref), stack, chain ->
-      (*CSC: for variables in the chain, the sub is meaningless *)
+      vref.sub <- InsideSub;
       "sea₂",(t, [], (vref, stack) :: chain)
   | Var ({sub=SubValue v; _} as vref), _stack, _chain as s ->
       let skel = extract_skeleton v in
       vref.sub <- SubSkel skel;
       "sk",s
   | Var {sub=SubSkel v; _}, stack, chain ->
-      (* CSC: there is no sea₄ and thus ss fires instead and we do not check for the stack to be non-empty *)
       "ss",(rename_term v, stack, chain)
   | Abs _ as value, [], (vref, stack) :: chain ->
       vref.sub <- SubValue value;
@@ -223,7 +216,7 @@ let step : state -> string * state =
      assert false (* stepping over a normal term *)
   | Var {sub=NoSub; name; _}, _stack, _chain ->
      raise (UnboundVariable name)
-  | Var {sub=(Uplink _ | Copy _); _}, _stack, _chain ->
+  | Var {sub=(Uplink _ | Copy _ | InsideSub); _}, _stack, _chain ->
      raise InvalidTerm
 
 let rec eval logger betas =
