@@ -184,7 +184,7 @@ let pretty_chain ~avoid c =
 let print_state logger trans (t, s, c) =
   Logger.log logger Logger.EvalTrace (lazy (
     let env = extract_environment ~avoid:[] (t::s) in
-    Printf.sprintf "%s\t\027[31m%s\027[0m|%s|%s|\027[32m%s\027[0m" trans (pretty_chain ~avoid:env c) (pretty_term t) (pretty_stack s) (pretty_env env)
+    Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m" trans (pretty_chain ~avoid:env c) (pretty_term t) (pretty_stack s) (pretty_env env)
   ))
 
 
