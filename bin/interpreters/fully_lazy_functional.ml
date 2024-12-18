@@ -118,6 +118,7 @@ let rec rename_term (t: term) = match t with
       v.sub <- Copy fresh_v;
       let body' = rename_term body in
       v.sub <- NoSub;
+      (*CSC: too costly; add occurrences to Copy *)
       let occurrences = get_occurrences fresh_v body' in
       let res = Abs { v = fresh_v; body = body' ; taken=false; parent=None; occurrences} in
       set_parent body' (Some res);
