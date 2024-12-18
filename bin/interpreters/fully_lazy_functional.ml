@@ -11,7 +11,7 @@ and sub =
   | SubValue of term
   | SubSkel of term
   | InsideSub
-  | Copy of var_ref
+  | Copy of (term list ref * var_ref)
 
 exception UnboundVariable of string
 exception BoundedTwice of string
@@ -73,28 +73,23 @@ let extract_skeleton t = match t with
 
 (* Convert a Syntax_tree.term in a term *)
 
-let rec get_occurrences vref =
- function
-   | Var {v;_} as t when v==vref -> [t]
-   | Var _ -> []
-   | Abs {body;_} -> get_occurrences vref body
-   | App {head;arg;_} ->
-      get_occurrences vref head @ get_occurrences vref arg
-
 let rec scope_checker env avoid (t: Syntax_tree.term): string list * term =
   match t with
     | Var v ->
        (match List.assoc_opt v env with
-         | Some vref -> avoid,Var {v=vref; taken=false; parent=None}
+         | Some (occ,vref) ->
+             let res = Var {v=vref; taken=false; parent=None} in
+             occ := res::!occ;
+             avoid,res
          | None -> raise (UnboundVariable v))
     | Abs (v, body) ->
        (if List.mem v avoid then
          raise (BoundedTwice v)
         else
          let vref = { orig_name = v; name = v; sub = NoSub } in
-         let avoid,body = scope_checker ((v, vref) :: env) (v::avoid) body in
-         let occurrences = get_occurrences vref body in
-         let res = Abs { v = vref; body; taken=false; parent=None; occurrences } in
+         let occ = ref [] in
+         let avoid,body = scope_checker ((v, (occ, vref)) :: env) (v::avoid) body in
+         let res = Abs { v = vref; body; taken=false; parent=None; occurrences= !occ } in
          set_parent body (Some res);
          avoid, res)
     | App (head, arg) ->
@@ -110,17 +105,19 @@ let scope_check t = snd (scope_checker [] [] t)
 (* Interpreter *)
 
 let rec rename_term (t: term) = match t with
-  | Var {v={orig_name = _; name = _; sub = Copy v}; _}
+  | Var {v={orig_name = _; name = _; sub = Copy (occ,v)}; _} ->
+     let res = Var {v; taken=false; parent=None} in
+     occ := res::!occ;
+     res
   | Var {v; _} ->
      Var {v; taken=false; parent=None}
   | Abs { v; body; _ } ->
       let fresh_v = make_fresh_var v.orig_name in
-      v.sub <- Copy fresh_v;
+      let occ = ref [] in
+      v.sub <- Copy (occ, fresh_v);
       let body' = rename_term body in
       v.sub <- NoSub;
-      (*CSC: too costly; add occurrences to Copy *)
-      let occurrences = get_occurrences fresh_v body' in
-      let res = Abs { v = fresh_v; body = body' ; taken=false; parent=None; occurrences} in
+      let res = Abs { v = fresh_v; body = body' ; taken=false; parent=None; occurrences = !occ} in
       set_parent body' (Some res);
       res
   | App { head; arg; _ } -> 
