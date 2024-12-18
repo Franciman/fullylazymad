@@ -15,6 +15,7 @@ end
 let interpreters: (string * (module Interpreter)) list  =
     [ "functional", (module Interpreters.Functional : Interpreter);
       "fully-lazy-functional", (module Interpreters.Fully_lazy_functional : Interpreter);
+      "fully-lazy-functional-black-mark", (module Interpreters.Fully_lazy_functional_black_mark : Interpreter);
       "imperative", (module Interpreters.Imperative : Interpreter);
       "fully-lazy-imperative", (module Interpreters.Fully_lazy_imperative : Interpreter);
     ]
