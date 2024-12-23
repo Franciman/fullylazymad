@@ -130,7 +130,7 @@ let rec rename_term (t: term) = match t with
       
 type stack = term list
 and chain = (var_ref * stack) list 
-and state = term * stack * chain
+and state = chain * term * stack
 
 (* Pretty printer *)
 
@@ -181,7 +181,7 @@ let pretty_chain ~avoid c =
   String.concat ":" l
 
 
-let print_state logger trans (t, s, c) =
+let print_state logger trans (c, t, s) =
   Logger.log logger Logger.EvalTrace (lazy (
     let env = extract_environment ~avoid:[] (t::s) in
     Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m" trans (pretty_chain ~avoid:env c) (pretty_term t) (pretty_stack s) (pretty_env env)
@@ -190,36 +190,36 @@ let print_state logger trans (t, s, c) =
 
 let step : state -> string * state =
  function
-  | App { head; arg; _ }, args, chain ->
+  | chain, App { head; arg; _ }, args ->
       set_parent head None;
       set_parent arg None;
-      "sea₁ ",(head, arg :: args, chain)
-  | Abs { v; body; _ }, arg :: args, chain ->
+      "sea₁ ",(chain, head, arg :: args)
+  | chain, Abs { v; body; _ }, arg :: args ->
       set_parent body None;
       v.sub <- SubTerm arg;
-      "β",(body, args, chain)
-  | Var ({v={sub=SubTerm t; _} as vref; _}), stack, chain ->
+      "β",(chain, body, args)
+  | chain, Var ({v={sub=SubTerm t; _} as vref; _}), stack ->
       vref.sub <- InsideSub;
-      "sea₂",(t, [], (vref, stack) :: chain)
-  | Var ({v={sub=SubValue v; _} as vref; _}), _stack, _chain as s ->
+      "sea₂",((vref, stack) :: chain, t, [])
+  | _chain, Var ({v={sub=SubValue v; _} as vref; _}), _stack as s ->
       let skel = extract_skeleton v in
       vref.sub <- SubSkel skel;
       "sk",s
-  | Var ({v={sub=SubSkel v; _}; _}), stack, chain ->
-      "ss",(rename_term v, stack, chain)
-  | Abs _ as value, [], (vref, stack) :: chain ->
+  | chain, Var ({v={sub=SubSkel v; _}; _}), stack ->
+      "ss",(chain, rename_term v, stack)
+  | (vref, stack)::chain, (Abs _ as value), [] ->
       vref.sub <- SubValue value;
-      "sea₃",(Var {v=vref; taken=false; parent=None}, stack, chain)
-  | Abs _, [], [] ->
+      "sea₃",(chain, Var {v=vref; taken=false; parent=None}, stack)
+  | [], Abs _, [] ->
      assert false (* stepping over a normal term *)
-  | Var {v={sub=NoSub; name; _}; _}, _stack, _chain ->
+  | _chain, Var {v={sub=NoSub; name; _}; _}, _stack ->
      raise (UnboundVariable name)
-  | Var {v={sub=(Copy _ | InsideSub); _}; _}, _stack, _chain ->
+  | _chain, Var {v={sub=(Copy _ | InsideSub); _}; _}, _stack ->
      raise InvalidTerm
 
 let rec eval logger betas =
  function
-  | (Abs _ as value, [], []) ->
+   | ([], (Abs _ as value), []) ->
       (* Normal form reached *)
       Logger.log logger Logger.Summary (lazy (Printf.sprintf "Number of betas: %d\n" betas));
       value
@@ -229,6 +229,6 @@ let rec eval logger betas =
      eval logger (if trans="β" then betas+1 else betas) next_state
 
 let run logger t =
-  let s = (t, [], []) in
+  let s = ([], t, []) in
   print_state logger "" s;
   eval logger 0 s
