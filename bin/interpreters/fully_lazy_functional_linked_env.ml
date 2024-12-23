@@ -4,7 +4,12 @@ type term =
   | App of { mutable head: term; mutable arg: term; mutable taken: bool; mutable parent: term option }
 
 (* We also store the original name to be used as basis for generating fresh names *)
-and var_ref = { orig_name : string; name : string; mutable sub : sub }
+and var_ref =
+ { mutable prev : var_ref option;
+   orig_name : string;
+   name : string;
+   mutable sub : sub;
+   mutable next : var_ref option }
 and sub =
     NoSub
   | SubTerm of term
@@ -13,12 +18,25 @@ and sub =
   | InsideSub
   | Copy of (term list ref * var_ref)
 
+type env = var_ref option
+
+(* Operations on the environment *)
+let push vref env =
+ vref.next <- env ;
+ Option.iter (fun v -> v.prev <- Some vref) env
+
+let split vref =
+ let env' = vref.next in
+ vref.next <- None ;
+ Option.iter (fun v -> v.prev <- None) env' ;
+ env'
+
 exception UnboundVariable of string
 exception BoundedTwice of string
 exception InvalidTerm
 
 let make_fresh_var (orig_name: string) = 
-  { orig_name = orig_name; name = Utils.gen_fresh_name orig_name; sub = NoSub }
+  { prev = None; orig_name = orig_name; name = Utils.gen_fresh_name orig_name; sub = NoSub; next = None }
 
   
 (* Skeleton extraction *)
@@ -46,7 +64,7 @@ let rec mark_skeleton =
       then (a.taken <- true; mark_skeleton a.parent)
       
 (* Extract flesh and unmark the skeleton *)
-let rec extract_flesh mt = match mt with
+let rec extract_flesh env mt = match mt with
   | Var v -> v.taken <- false ; mt
   | Abs { taken = false; _}
   | App { taken = false; _} ->
@@ -54,21 +72,25 @@ let rec extract_flesh mt = match mt with
      let p = get_parent mt in
      set_parent mt None;
      fresh_vref.sub <- SubTerm mt;
+     push fresh_vref !env;
+     env := Some fresh_vref;
      Var { v=fresh_vref ; taken=false ; parent = p }
   | Abs a ->
      a.taken <- false;
-     a.body <- extract_flesh a.body;
+     a.body <- extract_flesh env a.body;
      mt
   | App a ->
      a.taken <- false;
-     a.head <- extract_flesh a.head;
-     a.arg <- extract_flesh a.arg;
+     a.head <- extract_flesh env a.head;
+     a.arg <- extract_flesh env a.arg;
      mt
 
-let extract_skeleton t = match t with
+let extract_skeleton env t = match t with
   | Abs _ ->
      mark_skeleton (Some t);
-     extract_flesh t
+     let env = ref env in
+     let res = extract_flesh env t in
+     res,!env
   | Var _ | App _ -> raise InvalidTerm
 
 (* Convert a Syntax_tree.term in a term *)
@@ -86,7 +108,7 @@ let rec scope_checker env avoid (t: Syntax_tree.term): string list * term =
        (if List.mem v avoid then
          raise (BoundedTwice v)
         else
-         let vref = { orig_name = v; name = v; sub = NoSub } in
+          let vref = { prev = None; orig_name = v; name = v; sub = NoSub; next = None } in
          let occ = ref [] in
          let avoid,body = scope_checker ((v, (occ, vref)) :: env) (v::avoid) body in
          let res = Abs { v = vref; body; taken=false; parent=None; occurrences= !occ } in
@@ -127,10 +149,10 @@ let rec rename_term (t: term) = match t with
       set_parent head' (Some res);
       set_parent arg' (Some res);
       res
-      
+ 
 type stack = term list
-and chain = (var_ref * stack) list 
-and state = chain * term * stack
+and chain = (var_ref * stack * env) list (* v.prev (back)points to the (tail of the) env *)
+and state = chain * term * stack * env
 
 (* Pretty printer *)
 
@@ -145,21 +167,6 @@ let rec pretty_term_helper t prec = match t with
 
 and pretty_term t = pretty_term_helper t 0
 
-let extract_environment ~avoid s =
- let rec extract_environment_helper acc t = match t with
-  | Var {v;_} -> (match v.sub with
-               | _ when List.exists (fun (_,_,v') -> v==v') avoid -> acc
-               | NoSub -> acc
-               | SubTerm t | SubValue t | SubSkel t ->
-                  let entry = (v.name, v.sub, v) in
-                  extract_environment_helper (entry::(List.filter (fun (_,_,v') -> v!=v') acc)) t
-               | Copy _ | InsideSub -> raise InvalidTerm)
-  | Abs a -> extract_environment_helper acc a.body
-  | App a -> extract_environment_helper (extract_environment_helper acc a.head) a.arg
- in
-  List.rev (List.fold_left (extract_environment_helper) [] s)
-
-
 let pretty_stack s = String.concat ":" (List.map (fun t -> pretty_term_helper t app_prec) s)
 
 let pretty_sub name sub = match sub with
@@ -169,57 +176,63 @@ let pretty_sub name sub = match sub with
   | SubSkel t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₛ"
   | InsideSub | Copy _ -> raise InvalidTerm
 
-let pretty_env env = String.concat ":" (List.map (fun (name,sub,_) -> pretty_sub name sub) env)
+let rec pretty_env_helper ~skip_last env =
+ match env with
+ | None -> []
+ | Some {next=None; _} when skip_last -> []
+ | Some {name; sub; next; _} ->
+    pretty_sub name sub :: pretty_env_helper ~skip_last next
+
+let pretty_env ~skip_last env =
+ String.concat ":" (pretty_env_helper ~skip_last env)
   
+let pretty_chain c =
+  let pretty_chain_helper (v, s, env) = 
+   Printf.sprintf "(%s,%s,%s)" v.name (pretty_stack s) (pretty_env ~skip_last:true env) in
+  String.concat ":" (List.rev_map pretty_chain_helper c)
 
-let pretty_chain ~avoid c =
-  let pretty_chain_helper ~avoid (v, s) = 
-    let avoid = (v.name,v.sub,v)::avoid in
-    let env = extract_environment ~avoid s in
-    env@avoid,Printf.sprintf "(%s,%s,%s)"  v.name (pretty_stack s) (pretty_env env) in
-  let _,l = List.fold_left (fun (avoid,l) ci -> let avoid,i = pretty_chain_helper ~avoid ci in avoid,i::l) (avoid,[]) c  in
-  String.concat ":" l
-
-
-let print_state logger trans (c, t, s) =
+let print_state logger trans (c, t, s, env) =
   Logger.log logger Logger.EvalTrace (lazy (
-    let env = extract_environment ~avoid:[] (t::s) in
-    Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m" trans (pretty_chain ~avoid:env c) (pretty_term t) (pretty_stack s) (pretty_env env)
+    Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m" trans (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env ~skip_last:false env)
   ))
 
 
 let step : state -> string * state =
  function
-  | chain, App { head; arg; _ }, args ->
+  | chain, App { head; arg; _ }, args, env ->
       set_parent head None;
       set_parent arg None;
-      "sea₁ ",(chain, head, arg :: args)
-  | chain, Abs { v; body; _ }, arg :: args ->
+      "sea₁ ",(chain, head, arg :: args, env)
+  | chain, Abs { v; body; _ }, arg :: args, env ->
       set_parent body None;
       v.sub <- SubTerm arg;
-      "β",(chain, body, args)
-  | chain, Var ({v={sub=SubTerm t; _} as vref; _}), stack ->
+      push v env;
+      "β",(chain, body, args, Some v)
+  | chain, Var ({v={sub=SubTerm t; _} as vref; _}), stack, env ->
       vref.sub <- InsideSub;
-      "sea₂",((vref, stack) :: chain, t, [])
-  | (vref, stack)::chain, (Abs _ as value), [] ->
+      let env' = split vref in
+      "sea₂",((vref, stack, env) :: chain, t, [], env')
+  | (vref, stack, env)::chain, (Abs _ as value), [], env' ->
       vref.sub <- SubValue value;
-      "sea₃",(chain, Var {v=vref; taken=false; parent=None}, stack)
-  | _chain, Var ({v={sub=SubValue v; _} as vref; _}), _stack as s ->
-      let skel = extract_skeleton v in
+      push vref env';
+      "sea₃",(chain, Var {v=vref; taken=false; parent=None}, stack, env)
+  | _chain, Var ({v={sub=SubValue v; _} as vref; _}), _stack, _env as s ->
+      let skel,env'' = extract_skeleton vref.next v in
       vref.sub <- SubSkel skel;
+      push vref env'';
       "sk",s
-  | chain, Var ({v={sub=SubSkel v; _}; _}), stack ->
-      "ss",(chain, rename_term v, stack)
-  | [], Abs _, [] ->
+  | chain, Var ({v={sub=SubSkel v; _}; _}), stack, env ->
+      "ss",(chain, rename_term v, stack, env)
+  | [], Abs _, [], _env ->
      assert false (* stepping over a normal term *)
-  | _chain, Var {v={sub=NoSub; name; _}; _}, _stack ->
+  | _chain, Var {v={sub=NoSub; name; _}; _}, _stack, _env ->
      raise (UnboundVariable name)
-  | _chain, Var {v={sub=(Copy _ | InsideSub); _}; _}, _stack ->
+  | _chain, Var {v={sub=(Copy _ | InsideSub); _}; _}, _stack, _env ->
      raise InvalidTerm
 
 let rec eval logger betas =
  function
-   | ([], (Abs _ as value), []) ->
+   | ([], (Abs _ as value), [], _env) ->
       (* Normal form reached *)
       Logger.log logger Logger.Summary (lazy (Printf.sprintf "Number of betas: %d\n" betas));
       value
@@ -229,6 +242,6 @@ let rec eval logger betas =
      eval logger (if trans="β" then betas+1 else betas) next_state
 
 let run logger t =
-  let s = ([], t, []) in
+  let s = ([], t, [], None) in
   print_state logger "" s;
   eval logger 0 s

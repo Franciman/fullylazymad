@@ -128,7 +128,7 @@ let scope_check t = snd (scope_checker [] [] t)
 (* Interpreter *)
 
 let rec rename_term (t: term) = match t with
-  | Var {orig_name = _; name = _; sub = Copy v} -> Var v
+  | Var {sub = Copy v; _} -> Var v
   | Var _ -> t
   | Abs { v; body } ->
       let fresh_v = make_fresh_var v.orig_name in
@@ -152,7 +152,7 @@ let app_prec = 2
 let abs_prec = 1
 
 let rec pretty_term_helper t prec = match t with
-  | Var { orig_name = _; name = name; sub = _ } -> Utils.surround_prec var_prec prec name
+  | Var { name = name; _ } -> Utils.surround_prec var_prec prec name
   | Abs {v; body} -> Utils.surround_prec abs_prec prec ("λ" ^ v.name ^ "." ^ pretty_term_helper body abs_prec)
   | App {head; arg} -> Utils.surround_prec app_prec prec (pretty_term_helper head app_prec ^ "" ^ pretty_term_helper arg (app_prec + 1))
 
@@ -211,15 +211,15 @@ let step : state -> string * state =
   | chain, Var ({sub=SubTerm t; _} as vref), stack ->
       vref.sub <- InsideSub;
       "sea₂",((vref, stack)::chain, t, [])
+  | (vref, stack)::chain, (Abs _ as value), [] ->
+      vref.sub <- SubValue value;
+      "sea₃",(chain, Var vref, stack)
   | _chain, Var ({sub=SubValue v; _} as vref), _stack as s ->
       let skel = extract_skeleton v in
       vref.sub <- SubSkel skel;
       "sk",s
   | chain, Var {sub=SubSkel v; _}, stack ->
       "ss",(chain, rename_term v, stack)
-  | (vref, stack)::chain, (Abs _ as value), [] ->
-      vref.sub <- SubValue value;
-      "sea₃",(chain, Var vref, stack)
   | [], Abs _, [] ->
      assert false (* stepping over a normal term *)
   | _chain, Var {sub=NoSub; name; _}, _stack ->
