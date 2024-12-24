@@ -37,7 +37,7 @@ exception BoundedTwice of string
 exception InvalidTerm
 
 let make_fresh_var (orig_name: string) = 
-  let name = if orig_name = "_" then "_" else Utils.gen_fresh_name orig_name in
+  let name = if orig_name = "dummy" then "dummy" else Utils.gen_fresh_name orig_name in
   { prev = None; orig_name = orig_name; name; sub = NoSub; refno = 0; next = None }
 
   
