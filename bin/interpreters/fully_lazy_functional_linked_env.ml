@@ -12,8 +12,7 @@ and var_ref =
    mutable next : var_ref option }
 and sub =
     NoSub
-  | SubTerm of term
-  | SubValue of term
+  | Sub of term
   | SubSkel of term
   | Hole
   | Copy of (term list ref * var_ref)
@@ -71,7 +70,7 @@ let rec extract_flesh env mt = match mt with
      let fresh_vref = make_fresh_var "p" in
      let p = get_parent mt in
      set_parent mt None;
-     fresh_vref.sub <- SubTerm mt;
+     fresh_vref.sub <- Sub mt;
      push fresh_vref !env;
      env := Some fresh_vref;
      Var { v=fresh_vref ; taken=false ; parent = p }
@@ -171,9 +170,8 @@ let pretty_stack s = String.concat ":" (List.map (fun t -> pretty_term_helper t 
 
 let pretty_sub name sub = match sub with
   | NoSub -> ""
-  | SubTerm t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₜ"
-  | SubValue t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₗ"
-  | SubSkel t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₛ"
+  | Sub t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]"
+  | SubSkel t -> "<" ^ name ^ "←" ^ pretty_term t ^ ">"
   | Hole | Copy _ -> raise InvalidTerm
 
 let rec pretty_env_helper ~skip_last env =
@@ -205,18 +203,18 @@ let step : state -> string * state =
       "sea₁ ",(chain, head, arg :: args, env)
   | chain, Abs { v; body; _ }, arg :: args, env ->
       set_parent body None;
-      v.sub <- SubTerm arg;
+      v.sub <- Sub arg;
       push v env;
       "β",(chain, body, args, Some v)
-  | chain, Var ({v={sub=SubTerm t; _} as vref; _}), stack, env ->
+  | chain, Var ({v={sub=Sub (App _ | Var _ as t); _} as vref; _}), stack, env ->
       vref.sub <- Hole;
       let env' = split vref in
       "sea₂",((vref, stack, env) :: chain, t, [], env')
   | (vref, stack, env)::chain, (Abs _ as value), [], env' ->
-      vref.sub <- SubValue value;
+      vref.sub <- Sub value;
       push vref env';
       "sea₃",(chain, Var {v=vref; taken=false; parent=None}, stack, env)
-  | _chain, Var ({v={sub=SubValue v; _} as vref; _}), _stack, _env as s ->
+  | _chain, Var ({v={sub=Sub (Abs _ as v); _} as vref; _}), _stack, _env as s ->
       let skel,env'' = extract_skeleton vref.next v in
       vref.sub <- SubSkel skel;
       push vref env'';

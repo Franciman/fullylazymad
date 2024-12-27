@@ -7,8 +7,7 @@ type term =
 and var_ref = { orig_name : string; name : string; mutable sub : sub }
 and sub =
     NoSub
-  | SubTerm of term
-  | SubValue of term
+  | Sub of term
   | SubSkel of term
   | Hole
   | Copy of (term list ref * var_ref)
@@ -53,7 +52,7 @@ let rec extract_flesh mt = match mt with
      let fresh_vref = make_fresh_var "p" in
      let p = get_parent mt in
      set_parent mt None;
-     fresh_vref.sub <- SubTerm mt;
+     fresh_vref.sub <- Sub mt;
      Var { v=fresh_vref ; taken=false ; parent = p }
   | Abs a ->
      a.taken <- false;
@@ -150,7 +149,7 @@ let extract_environment ~avoid s =
   | Var {v;_} -> (match v.sub with
                | _ when List.exists (fun (_,_,v') -> v==v') avoid -> acc
                | NoSub -> acc
-               | SubTerm t | SubValue t | SubSkel t ->
+               | Sub t | SubSkel t ->
                   let entry = (v.name, v.sub, v) in
                   extract_environment_helper (entry::(List.filter (fun (_,_,v') -> v!=v') acc)) t
                | Copy _ | Hole -> raise InvalidTerm)
@@ -164,9 +163,8 @@ let pretty_stack s = String.concat ":" (List.map (fun t -> pretty_term_helper t 
 
 let pretty_sub name sub = match sub with
   | NoSub -> ""
-  | SubTerm t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₜ"
-  | SubValue t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₗ"
-  | SubSkel t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₛ"
+  | Sub t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]"
+  | SubSkel t -> "<" ^ name ^ "←" ^ pretty_term t ^ ">"
   | Hole | Copy _ -> raise InvalidTerm
 
 let pretty_env env = String.concat ":" (List.map (fun (name,sub,_) -> pretty_sub name sub) env)
@@ -196,15 +194,15 @@ let step : state -> string * state =
       "sea₁ ",(chain, head, arg :: args)
   | chain, Abs { v; body; _ }, arg :: args ->
       set_parent body None;
-      v.sub <- SubTerm arg;
+      v.sub <- Sub arg;
       "β",(chain, body, args)
-  | chain, Var ({v={sub=SubTerm t; _} as vref; _}), stack ->
+  | chain, Var ({v={sub=Sub (App _ | Var _ as t); _} as vref; _}), stack ->
       vref.sub <- Hole;
       "sea₂",((vref, stack) :: chain, t, [])
   | (vref, stack)::chain, (Abs _ as value), [] ->
-      vref.sub <- SubValue value;
+      vref.sub <- Sub value;
       "sea₃",(chain, Var {v=vref; taken=false; parent=None}, stack)
-  | _chain, Var ({v={sub=SubValue v; _} as vref; _}), _stack as s ->
+  | _chain, Var ({v={sub=Sub (Abs _ as v); _} as vref; _}), _stack as s ->
       let skel = extract_skeleton v in
       vref.sub <- SubSkel skel;
       "sk",s
