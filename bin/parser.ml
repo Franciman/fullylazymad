@@ -145,10 +145,10 @@ let unicode_char uc =
 let lexeme_unicode_char uc = ignoring_surroundings (unicode_char uc)
 
 
-(* Lex variable names, they can start with [_a-zA-Z] and continue with [_a-zA-Z0-9]|[-><?$%/={}^[]] *)
+(* Variable names are made of a single letter [a-zA-Z] *)
 let parse_var_name = 
-   let is_var_init c = (c = '_' || ('A' <= c && c <= 'Z' ) || ('a' <= c && c <= 'z') || String.contains "-><?$%/={}^[]" c) in
-   let is_var_cont c = is_var_init c || ('0' <= c && c <= '9') in
+   let is_var_init c = (('A' <= c && c <= 'Z' ) || ('a' <= c && c <= 'z')) in
+   let is_var_cont _ = false in
    let make_var_name list = 
       let buf = Buffer.create 16 in
       List.iter (Buffer.add_char buf) list;
