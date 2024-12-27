@@ -176,26 +176,26 @@ let pretty_sub name sub = match sub with
   | NoSub -> ""
   | Sub t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]"
   | SubSkel t -> "<" ^ name ^ "←" ^ pretty_term t ^ ">"
-  | Hole | Copy _ -> raise InvalidTerm
+  | Hole -> "[" ^ name ^ "←.]"
+  | Copy _ -> raise InvalidTerm
 
-let rec pretty_env_helper ~skip_last env =
+let rec pretty_env_helper env =
  match env with
  | None -> []
- | Some {next=None; _} when skip_last -> []
  | Some {name; sub; next; _} ->
-    pretty_sub name sub :: pretty_env_helper ~skip_last next
+    pretty_sub name sub :: pretty_env_helper next
 
-let pretty_env ~skip_last env =
- String.concat ":" (pretty_env_helper ~skip_last env)
+let pretty_env env =
+ String.concat ":" (pretty_env_helper env)
   
 let pretty_chain c =
   let pretty_chain_helper (v, s, env) = 
-   Printf.sprintf "(\027[4m%s\027[0;31m,%s,%s)" v.name (pretty_stack s) (pretty_env ~skip_last:true env) in
+   Printf.sprintf "(\027[4m%s\027[0;31m,%s,%s)" v.name (pretty_stack s) (pretty_env env) in
   String.concat ":" (List.rev_map pretty_chain_helper c)
 
 let print_state logger trans (c, t, s, env) =
   Logger.log logger Logger.EvalTrace (lazy (
-    Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m" trans (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env ~skip_last:false env)
+    Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m" trans (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env env)
   ))
 
 (* Garbage collection *)

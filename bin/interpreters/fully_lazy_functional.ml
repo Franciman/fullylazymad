@@ -152,7 +152,8 @@ let extract_environment ~avoid s =
                | Sub t | SubSkel t ->
                   let entry = (v.name, v.sub, v) in
                   extract_environment_helper (entry::(List.filter (fun (_,_,v') -> v!=v') acc)) t
-               | Copy _ | Hole -> raise InvalidTerm)
+               | Hole -> (v.name, v.sub, v)::acc
+               | Copy _ -> raise InvalidTerm)
   | Abs a -> extract_environment_helper acc a.body
   | App a -> extract_environment_helper (extract_environment_helper acc a.head) a.arg
  in
@@ -165,15 +166,16 @@ let pretty_sub name sub = match sub with
   | NoSub -> ""
   | Sub t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]"
   | SubSkel t -> "<" ^ name ^ "←" ^ pretty_term t ^ ">"
-  | Hole | Copy _ -> raise InvalidTerm
+  | Hole -> "[" ^ name ^ "←.]"
+  | Copy _ -> raise InvalidTerm
 
 let pretty_env env = String.concat ":" (List.map (fun (name,sub,_) -> pretty_sub name sub) env)
   
 
 let pretty_chain ~avoid c =
   let pretty_chain_helper ~avoid (v, s) = 
-    let avoid = (v.name,v.sub,v)::avoid in
     let env = extract_environment ~avoid s in
+    let avoid = (v.name,v.sub,v)::avoid in
     env@avoid,Printf.sprintf "(\027[4m%s\027[0;31m,%s,%s)"  v.name (pretty_stack s) (pretty_env env) in
   let _,l = List.fold_left (fun (avoid,l) ci -> let avoid,i = pretty_chain_helper ~avoid ci in avoid,i::l) (avoid,[]) c  in
   String.concat ":" l
