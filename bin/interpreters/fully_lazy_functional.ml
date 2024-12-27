@@ -174,7 +174,7 @@ let pretty_chain ~avoid c =
   let pretty_chain_helper ~avoid (v, s) = 
     let avoid = (v.name,v.sub,v)::avoid in
     let env = extract_environment ~avoid s in
-    env@avoid,Printf.sprintf "(%s,%s,%s)"  v.name (pretty_stack s) (pretty_env env) in
+    env@avoid,Printf.sprintf "(\027[4m%s\027[0m\027[31m,%s,%s)"  v.name (pretty_stack s) (pretty_env env) in
   let _,l = List.fold_left (fun (avoid,l) ci -> let avoid,i = pretty_chain_helper ~avoid ci in avoid,i::l) (avoid,[]) c  in
   String.concat ":" l
 

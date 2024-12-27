@@ -190,7 +190,7 @@ let pretty_env ~skip_last env =
   
 let pretty_chain c =
   let pretty_chain_helper (v, s, env) = 
-   Printf.sprintf "(%s,%s,%s)" v.name (pretty_stack s) (pretty_env ~skip_last:true env) in
+   Printf.sprintf "(\027[4m%s\027[0m\027[31m,%s,%s)" v.name (pretty_stack s) (pretty_env ~skip_last:true env) in
   String.concat ":" (List.rev_map pretty_chain_helper c)
 
 let print_state logger trans (c, t, s, env) =
