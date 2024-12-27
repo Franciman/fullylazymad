@@ -10,7 +10,7 @@ and sub =
   | SubTerm of term
   | SubValue of term
   | SubSkel of term
-  | InsideSub
+  | Hole
   | Copy of (term list ref * var_ref)
 
 exception UnboundVariable of string
@@ -153,7 +153,7 @@ let extract_environment ~avoid s =
                | SubTerm t | SubValue t | SubSkel t ->
                   let entry = (v.name, v.sub, v) in
                   extract_environment_helper (entry::(List.filter (fun (_,_,v') -> v!=v') acc)) t
-               | Copy _ | InsideSub -> raise InvalidTerm)
+               | Copy _ | Hole -> raise InvalidTerm)
   | Abs a -> extract_environment_helper acc a.body
   | App a -> extract_environment_helper (extract_environment_helper acc a.head) a.arg
  in
@@ -167,7 +167,7 @@ let pretty_sub name sub = match sub with
   | SubTerm t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₜ"
   | SubValue t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₗ"
   | SubSkel t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₛ"
-  | InsideSub | Copy _ -> raise InvalidTerm
+  | Hole | Copy _ -> raise InvalidTerm
 
 let pretty_env env = String.concat ":" (List.map (fun (name,sub,_) -> pretty_sub name sub) env)
   
@@ -199,7 +199,7 @@ let step : state -> string * state =
       v.sub <- SubTerm arg;
       "β",(chain, body, args)
   | chain, Var ({v={sub=SubTerm t; _} as vref; _}), stack ->
-      vref.sub <- InsideSub;
+      vref.sub <- Hole;
       "sea₂",((vref, stack) :: chain, t, [])
   | (vref, stack)::chain, (Abs _ as value), [] ->
       vref.sub <- SubValue value;
@@ -214,7 +214,7 @@ let step : state -> string * state =
      assert false (* stepping over a normal term *)
   | _chain, Var {v={sub=NoSub; name; _}; _}, _stack ->
      raise (UnboundVariable name)
-  | _chain, Var {v={sub=(Copy _ | InsideSub); _}; _}, _stack ->
+  | _chain, Var {v={sub=(Copy _ | Hole); _}; _}, _stack ->
      raise InvalidTerm
 
 let rec eval logger betas =

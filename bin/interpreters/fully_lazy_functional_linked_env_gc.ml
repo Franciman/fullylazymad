@@ -16,7 +16,7 @@ and sub =
   | SubTerm of term
   | SubValue of term
   | SubSkel of term
-  | InsideSub
+  | Hole
   | Copy of (term list ref * var_ref)
 
 type env = var_ref option
@@ -178,7 +178,7 @@ let pretty_sub name sub = match sub with
   | SubTerm t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₜ"
   | SubValue t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₗ"
   | SubSkel t -> "[" ^ name ^ "←" ^ pretty_term t ^ "]ₛ"
-  | InsideSub | Copy _ -> raise InvalidTerm
+  | Hole | Copy _ -> raise InvalidTerm
 
 let rec pretty_env_helper ~skip_last env =
  match env with
@@ -218,7 +218,7 @@ and gc {prev; next; sub; _} =
   | SubValue t
   | SubSkel t -> gc_term t
   | NoSub
-  | InsideSub
+  | Hole
   | Copy _ -> assert false);
  Option.iter (fun v -> v.prev <- prev) next;
  Option.iter (fun v -> v.next <- next) prev
@@ -249,7 +249,7 @@ let step : state -> string * state =
        end in
       "β",(chain, body, args, env')
   | chain, Var ({v={sub=SubTerm t; _} as vref; _}), stack, env ->
-      vref.sub <- InsideSub;
+      vref.sub <- Hole;
       let env' = split vref in
       "sea₂",((vref, stack, env) :: chain, t, [], env')
   | (vref, stack, env)::chain, (Abs _ as value), [], env' ->
@@ -269,7 +269,7 @@ let step : state -> string * state =
      assert false (* stepping over a normal term *)
   | _chain, Var {v={sub=NoSub; name; _}; _}, _stack, _env ->
      raise (UnboundVariable name)
-  | _chain, Var {v={sub=(Copy _ | InsideSub); _}; _}, _stack, _env ->
+  | _chain, Var {v={sub=(Copy _ | Hole); _}; _}, _stack, _env ->
      raise InvalidTerm
 
 let rec eval logger betas =
