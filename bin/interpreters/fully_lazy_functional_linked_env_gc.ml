@@ -155,7 +155,8 @@ let rec rename_term (t: term) = match t with
  
 type stack = term list
 and chain = (var_ref * stack * env) list (* v.prev (back)points to the (tail of the) env *)
-and state = chain * term * stack * env
+and roots = var_ref list
+and state = chain * term * stack * env * roots
 
 (* Pretty printer *)
 
@@ -193,30 +194,38 @@ let pretty_chain c =
    Printf.sprintf "(\027[4m%s\027[0;31m,%s,%s)" v.name (pretty_stack s) (pretty_env env) in
   String.concat ":" (List.rev_map pretty_chain_helper c)
 
-let print_state logger trans (c, t, s, env) =
+let pretty_roots vars =
+  String.concat ":" (List.map (fun {name; _} -> name) vars)
+
+let print_state logger trans (c, t, s, env, roots) =
   Logger.log logger Logger.EvalTrace (lazy (
-    Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m" trans (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env env)
+    Printf.sprintf "%s\t\027[31m%s\027[0m|\027[4m%s\027[0m|%s|\027[32m%s\027[0m|\027[35m%s\027[0m" trans (pretty_chain c) (pretty_term t) (pretty_stack s) (pretty_env env) (pretty_roots roots)
   ))
 
 (* Garbage collection *)
 
-let rec gc_term =
+let rec roots_of_term =
  function
   | Var { v; _ } ->
      if v.sub <> NoSub then begin
       v.refno <- v.refno - 1;
       if v.refno = 0 then
-       gc v
-     end
-  | Abs { body; _ } -> gc_term body
-  | App { head; arg; _ } -> gc_term head; gc_term arg
-and gc {prev; next; sub; _} =
+       [v]
+      else
+       []
+     end else []
+  | Abs { body; _ } -> roots_of_term body
+  | App { head; arg; _ } -> roots_of_term head @ roots_of_term arg
+
+let new_roots {sub; _} =
  (match sub with
   | Sub t
-  | SubSkel t -> gc_term t
+  | SubSkel t -> roots_of_term t
   | NoSub
   | Hole
-  | Copy _ -> assert false);
+  | Copy _ -> assert false)
+
+let detach {prev; next; _} =
  Option.iter (fun v -> v.prev <- prev) next;
  Option.iter (fun v -> v.next <- next) prev
 
@@ -228,59 +237,64 @@ let with_env env f x =
 
 let step : state -> string * state =
  function
-  | chain, App { head; arg; _ }, args, env ->
+  | chain, App { head; arg; _ }, args, env, [] ->
       set_parent head None;
       set_parent arg None;
-      "sea₁ ",(chain, head, arg :: args, env)
-  | chain, Abs { v; body; occurrences; _ }, arg :: args, env ->
+      "sea₁",(chain, head, arg :: args, env, [])
+  | chain, Abs { v; body; occurrences=(_::_ as occurrences); _ }, arg :: args, env, [] ->
       set_parent body None;
-      let refno = List.length occurrences in
-      let env' =
-       if refno = 0 then
-         with_env env gc_term arg
-       else begin
-        v.sub <- Sub arg;
-        v.refno <- refno;
-        push v env;
-        Some v
-       end in
-      "β",(chain, body, args, env')
-  | chain, Var ({v={sub=Sub (App _ | Var _ as t); _} as vref; _}), stack, env ->
+      v.sub <- Sub arg;
+      v.refno <- List.length occurrences;
+      push v env;
+      "β₁",(chain, body, args, Some v, [])
+  | chain, Abs { v; body; occurrences=[]; _ }, arg :: args, env, [] ->
+      set_parent body None;
+      v.sub <- Sub arg;
+      v.refno <- 0;
+      push v env;
+      "β₂",(chain, body, args, Some v, [v])
+  | chain, Var ({v={sub=Sub (App _ | Var _ as t); _} as vref; _}), stack, env, [] ->
       vref.sub <- Hole;
       let env' = split vref in
-      "sea₂",((vref, stack, env) :: chain, t, [], env')
-  | (vref, stack, env)::chain, (Abs _ as value), [], env' ->
+      "sea₂",((vref, stack, env) :: chain, t, [], env', [])
+  | (vref, stack, env)::chain, (Abs _ as value), [], env', [] ->
       vref.sub <- Sub value;
       push vref env';
-      "sea₃",(chain, Var {v=vref; taken=false; parent=None}, stack, env)
-  | _chain, Var ({v={sub=Sub (Abs _ as v); _} as vref; _}), _stack, _env as s ->
+      "sea₃",(chain, Var {v=vref; taken=false; parent=None}, stack, env, [])
+  | _chain, Var ({v={sub=Sub (Abs _ as v); _} as vref; _}), _stack, _env, [] as s ->
       let skel,env'' = extract_skeleton vref.next v in
       vref.sub <- SubSkel skel;
       push vref env'';
       "sk",s
-  | chain, Var ({v={sub=SubSkel v; _} as vref; _}), stack, env ->
-      vref.refno <- vref.refno - 1;
-      let env = if vref.refno = 0 then with_env env gc vref else env in
-      "ss",(chain, rename_term v, stack, env)
-  | [], Abs _, [], _env ->
+  | chain, Var ({v={sub=SubSkel v; refno; _} as vref; _}), stack, env, [] when refno <> 1 ->
+      vref.refno <- refno - 1;
+      "ss₁",(chain, rename_term v, stack, env, [])
+  | chain, Var ({v={sub=SubSkel v; _} as vref; _}), stack, env, [] ->
+      let env = with_env env detach vref in
+      "ss₂",(chain, v, stack, env, [])
+  | chain, t, stack, env, x::roots ->
+      let roots' = new_roots x in
+      let env = with_env env detach x in
+      "gc",(chain,t,stack,env,roots'@roots)
+  | [], Abs _, [], _env, [] ->
      assert false (* stepping over a normal term *)
-  | _chain, Var {v={sub=NoSub; name; _}; _}, _stack, _env ->
+  | _chain, Var {v={sub=NoSub; name; _}; _}, _stack, _env, _roots ->
      raise (UnboundVariable name)
-  | _chain, Var {v={sub=(Copy _ | Hole); _}; _}, _stack, _env ->
+  | _chain, Var {v={sub=(Copy _ | Hole); _}; _}, _stack, _env, _roots ->
      raise InvalidTerm
 
 let rec eval logger betas =
  function
-   | ([], (Abs _ as value), [], _env) ->
+   | ([], (Abs _ as value), [], _env, []) ->
       (* Normal form reached *)
       Logger.log logger Logger.Summary (lazy (Printf.sprintf "Number of betas: %d\n" betas));
       value
   | state ->
      let trans,next_state = step state in
      print_state logger ("→"^trans) next_state;
-     eval logger (if trans="β" then betas+1 else betas) next_state
+     eval logger (if trans="β₁" || trans="β₂" then betas+1 else betas) next_state
 
 let run logger t =
-  let s = ([], t, [], None) in
+  let s = ([], t, [], None, []) in
   print_state logger "" s;
   eval logger 0 s
